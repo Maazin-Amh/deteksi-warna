@@ -1,0 +1,191 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+
+  <style>
+    body {
+      font-family: Inter, sans-serif;
+      padding: 20px;
+      color: #222;
+    }
+
+    h2 {
+      margin-top: 0;
+    }
+
+    .status {
+      padding: 12px;
+      border-radius: 8px;
+      background: #f1f1f1;
+      margin: 15px 0;
+      font-size: 13px;
+    }
+
+    .connected {
+      background: #e1f7e8;
+      color: #137333;
+    }
+
+    .disconnected {
+      background: #fde8e8;
+      color: #b3261e;
+    }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 7px;
+      background: #18a058;
+      color: white;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    p {
+      font-size: 12px;
+      color: #777;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h2>OpenCV Color Capture</h2>
+
+  <div id="status" class="status disconnected">
+    Connecting to Python...
+  </div>
+
+  <button id="connect">Reconnect</button>
+
+  <p>
+    Press S in your OpenCV camera window
+    to create a color swatch in Figma.
+  </p>
+
+  <script>
+    const SERVER = "http://localhost:8765";
+
+    const status = document.getElementById("status");
+    const button = document.getElementById("connect");
+
+    let connected = false;
+    let polling = false;
+
+    function setStatus(message, isConnected) {
+      connected = isConnected;
+
+      status.textContent = message;
+      status.className = isConnected
+        ? "status connected"
+        : "status disconnected";
+    }
+
+    async function checkServer() {
+      try {
+        const response = await fetch(
+          SERVER + "/health",
+          { cache: "no-store" }
+        );
+
+        if (!response.ok) {
+          throw new Error("Server unavailable");
+        }
+
+        const data = await response.json();
+
+        if (data.status !== "connected") {
+          throw new Error("Invalid server status");
+        }
+
+        setStatus("Connected to Python server", true);
+
+      } catch (error) {
+        setStatus("Python server disconnected", false);
+      }
+    }
+
+    async function getColors() {
+      if (!connected) return;
+
+      try {
+        const response = await fetch(
+          SERVER + "/next",
+          { cache: "no-store" }
+        );
+
+        if (!response.ok) {
+          throw new Error("Failed to get color");
+        }
+
+        const data = await response.json();
+
+        if (data.available && data.color) {
+
+          console.log("COLOR RECEIVED:", data.color);
+
+          parent.postMessage({
+            pluginMessage: {
+              type: "add-swatch",
+              color: data.color
+            }
+          }, "*");
+        }
+
+      } catch (error) {
+        setStatus("Connection lost: " + error.message, false);
+      }
+    }
+
+    async function poll() {
+      if (polling) return;
+
+      polling = true;
+
+      try {
+        if (!connected) {
+          await checkServer();
+        }
+
+        if (connected) {
+          await getColors();
+        }
+      } finally {
+        polling = false;
+      }
+    }
+
+    function startPolling() {
+      setStatus("Connecting to Python...", false);
+
+      poll();
+
+      if (window.pollTimer) {
+        clearInterval(window.pollTimer);
+      }
+
+      window.pollTimer = setInterval(poll, 500);
+    }
+
+    button.addEventListener("click", startPolling);
+
+    window.onmessage = (event) => {
+      const msg = event.data.pluginMessage;
+
+      if (msg && msg.type === "success") {
+        setStatus(msg.message, true);
+      }
+
+      if (msg && msg.type === "error") {
+        setStatus(msg.message, false);
+      }
+    };
+
+    startPolling();
+  </script>
+
+</body>
+</html>
